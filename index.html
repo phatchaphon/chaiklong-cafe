@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ระบบจัดการร้านกาแฟ (Local Stock)</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+
+    <!-- หน้าจอ Login -->
+    <div id="login-screen" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: var(--bg-main, #f4f6f8); display: flex; justify-content: center; align-items: center; z-index: 9999;">
+        <div style="background: var(--bg-card, #fff); padding: 30px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); width: 100%; max-width: 400px; text-align: center;">
+            <h2 style="margin-bottom: 20px; color: var(--text-main, #333);">☕ เข้าสู่ระบบ Coffee POS</h2>
+            <form id="login-form" onsubmit="handleLogin(event); return false;" style="display: flex; flex-direction: column; gap: 15px; text-align: left;">
+                <div>
+                    <label style="font-size: 13px; color: var(--text-muted);" for="login-username">ชื่อผู้ใช้ (Username)</label>
+                    <input type="text" id="login-username" name="username" required placeholder="admin" style="width: 100%; padding: 10px; margin-top: 5px; border: 1px solid var(--border-color); border-radius: 6px;">
+                </div>
+                <div>
+                    <label style="font-size: 13px; color: var(--text-muted);" for="login-password">รหัสผ่าน</label>
+                    <input type="password" id="login-password" name="password" required placeholder="1234" style="width: 100%; padding: 10px; margin-top: 5px; border: 1px solid var(--border-color); border-radius: 6px;">
+                </div>
+                <button type="submit" style="background: var(--deep-pink, #E91E63); color: white; padding: 10px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; margin-top: 10px;">เข้าสู่ระบบ</button>
+            </form>
+            <div id="login-error" style="color: red; font-size: 12px; margin-top: 10px;"></div>
+        </div>
+    </div>
+
+    <div class="app-container">
+        <!-- แถบเมนูด้านซ้าย -->
+        <aside class="sidebar">
+            <h2>☕ Coffee POS</h2>
+            
+            <div class="theme-switch-container">
+                <span id="theme-label">☀️ โหมดสว่าง</span>
+                <button class="theme-switch-btn" onclick="toggleTheme()">สลับธีม</button>
+            </div>
+
+            <nav id="sidebar-nav">
+                <button onclick="changePage('dashboard', this)" class="active" data-page="dashboard">📊 ภาพรวม</button>
+                <button onclick="changePage('pos', this)" data-page="pos">🛒 สรุปยอดปิดร้าน</button>
+                <button onclick="changePage('menus', this)" data-page="menus">📋 จัดการเมนู/สูตร</button>
+                <button onclick="changePage('materials', this)" data-page="materials">📦 จัดการวัตถุดิบ</button>
+                <button onclick="changePage('history', this)" data-page="history">🕒 ประวัติทั้งหมด</button>
+                <button onclick="changePage('backup', this)" data-page="backup">💾 สำรอง/กู้คืนข้อมูล</button>
+            </nav>
+
+            <div class="sidebar-footer" style="display: flex; flex-direction: column; gap: 8px;">
+                <button id="logout-btn" onclick="handleLogout()" class="btn-danger btn-small" style="width: 100%; display: flex; justify-content: center; align-items: center; gap: 5px;">
+                    🚪 ออกจากระบบ
+                </button>
+                <button onclick="resetData()" class="btn-danger" style="width: 100%; font-size: 12px;">⚠️ ล้างข้อมูลทั้งหมด</button>
+            </div>
+        </aside>
+
+        <!-- พื้นที่แสดงเนื้อหาหลัก -->
+        <main class="content">
+            
+            <!-- หน้าภาพรวม -->
+            <section id="dashboard" class="page active">
+                <h1>ภาพรวมร้าน</h1>
+                
+                <div class="dashboard-cards">
+                    <div class="card">
+                        <h3>ยอดขายวันนี้</h3>
+                        <p id="dash-sales">0 บาท</p>
+                    </div>
+                    <div class="card">
+                        <h3>จำนวนแก้วที่ขายวันนี้</h3>
+                        <p id="dash-cups">0 แก้ว</p>
+                    </div>
+                    <div class="card">
+                        <h3>สถานะคลังวัตถุดิบ</h3>
+                        <div class="stock-status-summary" style="display: flex; gap: 15px; margin-top: 5px; font-size: 13px;">
+                            <span style="color: var(--success);">ปกติ: <strong id="stock-normal">0</strong></span>
+                            <span style="color: var(--warning);">ใกล้หมด: <strong id="stock-warn">0</strong></span>
+                            <span style="color: var(--danger);">หมดแล้ว: <strong id="stock-empty">0</strong></span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="dashboard-grid-secondary" style="display: grid; grid-template-columns: 2fr 1fr; gap: 20px; margin-top: 20px;">
+                    <div class="card" style="padding: 20px;">
+                        <h3>📈 กราฟยอดขาย 7 วันย้อนหลัง</h3>
+                        <div style="position: relative; height: 260px; width: 100%; margin-top: 10px;">
+                            <canvas id="salesChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="card" style="padding: 20px;">
+                        <h3>🏆 5 เมนูขายดีที่สุด</h3>
+                        <ul id="top-selling-list" style="list-style: none; padding: 0; margin-top: 10px;">
+                            <li style="color: var(--text-muted); font-size: 13px;">ยังไม่มีข้อมูลการขาย</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- สรุปประวัติการใช้วัตถุดิบ 3 ช่วงเวลา -->
+                <div class="card" style="margin-top: 20px; padding: 20px;">
+                    <h3 style="margin-bottom: 15px;">📦 สรุปประวัติการใช้วัตถุดิบตามช่วงเวลา</h3>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 15px;">
+                        <div style="background: var(--bg-main); padding: 12px; border-radius: 8px; border: 1px solid var(--border-color);">
+                            <h4 style="font-size: 14px; color: var(--primary-brown); margin-bottom: 8px; border-bottom: 2px solid var(--soft-pink); padding-bottom: 4px;">📅 วันนี้</h4>
+                            <ul id="usage-today-list" style="list-style: none; padding: 0; max-height: 150px; overflow-y: auto;">
+                                <li style="color: var(--text-muted); font-size: 13px;">ไม่มีข้อมูลการใช้</li>
+                            </ul>
+                        </div>
+                        <div style="background: var(--bg-main); padding: 12px; border-radius: 8px; border: 1px solid var(--border-color);">
+                            <h4 style="font-size: 14px; color: var(--primary-brown); margin-bottom: 8px; border-bottom: 2px solid var(--soft-pink); padding-bottom: 4px;">📊 7 วันย้อนหลัง</h4>
+                            <ul id="usage-7days-list" style="list-style: none; padding: 0; max-height: 150px; overflow-y: auto;">
+                                <li style="color: var(--text-muted); font-size: 13px;">ไม่มีข้อมูลการใช้</li>
+                            </ul>
+                        </div>
+                        <div style="background: var(--bg-main); padding: 12px; border-radius: 8px; border: 1px solid var(--border-color);">
+                            <h4 style="font-size: 14px; color: var(--primary-brown); margin-bottom: 8px; border-bottom: 2px solid var(--soft-pink); padding-bottom: 4px;">📈 30 วันย้อนหลัง</h4>
+                            <ul id="usage-30days-list" style="list-style: none; padding: 0; max-height: 150px; overflow-y: auto;">
+                                <li style="color: var(--text-muted); font-size: 13px;">ไม่มีข้อมูลการใช้</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card warn" style="margin-top: 20px;">
+                    <h3>⚠️ แจ้งเตือนสต็อคใกล้หมดหรือหมดแล้ว</h3>
+                    <ul id="dash-low-stock"></ul>
+                </div>
+            </section>
+
+            <!-- หน้าสรุปยอดขาย (POS) -->
+            <section id="pos" class="page">
+                <h1>สรุปยอดขายประจำวัน (ปิดร้าน)</h1>
+                <div class="pos-layout">
+                    <div id="pos-menu-container" class="pos-menu-area"></div>
+                    <div class="pos-summary">
+                        <h3>รายการที่ขายวันนี้</h3>
+                        <div id="cart-items">
+                            <p style="text-align:center; color:var(--text-muted);">ยังไม่ได้เลือกเมนู</p>
+                        </div>
+                        <div class="cart-total">
+                            <strong>ยอดรวมทั้งสิ้น: <span id="cart-total-price">0</span> บาท</strong>
+                        </div>
+                        <button class="btn-success btn-checkout" onclick="checkoutDailySales()">บันทึกยอด & ตัดสต็อคทีเดียว</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- หน้าจัดการเมนู -->
+            <section id="menus" class="page">
+                <div class="header-action">
+                    <h1>จัดการเมนู</h1>
+                    <button class="btn-success" onclick="openMenuModal()">+ เพิ่มเมนูใหม่</button>
+                </div>
+                
+                <div class="table-controls">
+                    <input type="text" id="menu-search" placeholder="🔍 ค้นหาชื่อเมนู..." onkeyup="renderMenuTable()" style="flex: 1; min-width: 200px;">
+                    <select id="menu-limit" onchange="renderMenuTable()">
+                        <option value="10">แสดง 10 รายการ</option>
+                        <option value="20" selected>แสดง 20 รายการ</option>
+                        <option value="50">แสดง 50 รายการ</option>
+                    </select>
+                </div>
+
+                <div style="overflow-x: auto;">
+                    <table class="data-table">
+                        <thead><tr><th>หมวดหมู่</th><th>ชื่อเมนู</th><th>ราคา</th><th>สูตรชง</th><th>จัดการ</th></tr></thead>
+                        <tbody id="menu-table-body"></tbody>
+                    </table>
+                </div>
+                <div class="pagination-container">
+                    <span id="menu-page-info">แสดง 0 ถึง 0 จาก 0 รายการ</span>
+                    <div class="pagination-buttons" id="menu-pagination"></div>
+                </div>
+            </section>
+
+            <!-- หน้าจัดการวัตถุดิบ -->
+            <section id="materials" class="page">
+                <div class="header-action">
+                    <h1>คลังวัตถุดิบ</h1>
+                    <button class="btn-success" onclick="openMaterialModal()">+ เพิ่มวัตถุดิบใหม่</button>
+                </div>
+
+                <div class="table-controls">
+                    <input type="text" id="material-search" placeholder="🔍 ค้นหาชื่อวัตถุดิบ..." onkeyup="renderMaterialTable()" style="flex: 1; min-width: 200px;">
+                    <select id="material-limit" onchange="renderMaterialTable()">
+                        <option value="10">แสดง 10 รายการ</option>
+                        <option value="20" selected>แสดง 20 รายการ</option>
+                        <option value="50">แสดง 50 รายการ</option>
+                    </select>
+                </div>
+
+                <div style="overflow-x: auto;">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>หมวดหมู่</th>
+                                <th>ชื่อวัตถุดิบ</th>
+                                <th>คงเหลือ</th>
+                                <th>หน่วย</th>
+                                <th>แจ้งเตือนต่ำกว่า</th>
+                                <th>ต้นทุน/หน่วย</th>
+                                <th>ต้นทุนรวม</th>
+                                <th>จัดการ</th>
+                            </tr>
+                        </thead>
+                        <tbody id="material-table-body"></tbody>
+                    </table>
+                </div>
+                <div class="pagination-container">
+                    <span id="material-page-info">แสดง 0 ถึง 0 จาก 0 รายการ</span>
+                    <div class="pagination-buttons" id="material-pagination"></div>
+                </div>
+            </section>
+
+            <!-- หน้าประวัติ -->
+            <section id="history" class="page">
+                <h1>ประวัติการทำรายการ</h1>
+                <div class="tabs">
+                    <button class="tab-btn active" onclick="showHistoryTab('sales', this)">🛒 ประวัติการขาย</button>
+                    <button class="tab-btn" onclick="showHistoryTab('system', this)">⚙️ ประวัติการตั้งค่าระบบ</button>
+                </div>
+                
+                <div id="hist-sales" class="tab-content active">
+                    <div class="table-controls" style="margin-top: 15px;">
+                        <input type="text" id="hist-sales-search" placeholder="🔍 ค้นหาประวัติการขาย..." onkeyup="renderSalesHistoryTable()" style="flex: 1; min-width: 200px;">
+                        <select id="hist-sales-limit" onchange="renderSalesHistoryTable()">
+                            <option value="10">แสดง 10 รายการ</option>
+                            <option value="20" selected>แสดง 20 รายการ</option>
+                            <option value="50">แสดง 50 รายการ</option>
+                        </select>
+                    </div>
+                    <div style="overflow-x: auto;">
+                        <table class="data-table">
+                            <thead><tr><th>เวลา</th><th>รายละเอียดการขาย (ปิดยอด)</th></tr></thead>
+                            <tbody id="hist-sales-body"></tbody>
+                        </table>
+                    </div>
+                    <div class="pagination-container">
+                        <span id="hist-sales-page-info">แสดง 0 ถึง 0 จาก 0 รายการ</span>
+                        <div class="pagination-buttons" id="hist-sales-pagination"></div>
+                    </div>
+                </div>
+
+                <div id="hist-system" class="tab-content" style="display:none;">
+                    <div class="table-controls" style="margin-top: 15px;">
+                        <input type="text" id="hist-sys-search" placeholder="🔍 ค้นหาประวัติระบบ..." onkeyup="renderSystemHistoryTable()" style="flex: 1; min-width: 200px;">
+                        <select id="hist-sys-limit" onchange="renderSystemHistoryTable()">
+                            <option value="10">แสดง 10 รายการ</option>
+                            <option value="20" selected>แสดง 20 รายการ</option>
+                            <option value="50">แสดง 50 รายการ</option>
+                        </select>
+                    </div>
+                    <div style="overflow-x: auto;">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th style="width: 18%;">เวลา</th>
+                                    <th style="width: 22%;">รายการ</th>
+                                    <th>ประเภท</th>
+                                    <th>รายละเอียดการเปลี่ยนแปลง</th>
+                                </tr>
+                            </thead>
+                            <tbody id="hist-system-body"></tbody>
+                        </table>
+                    </div>
+                    <div class="pagination-container">
+                        <span id="hist-sys-page-info">แสดง 0 ถึง 0 จาก 0 รายการ</span>
+                        <div class="pagination-buttons" id="hist-sys-pagination"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- หน้าสำรองและกู้คืนข้อมูล (Backup & Restore) เพิ่มใหม่ -->
+            <section id="backup" class="page">
+                <h1>💾 สำรองและกู้คืนข้อมูล</h1>
+                <p style="color: var(--text-muted); margin-bottom: 20px;">คุณสามารถดาวน์โหลดข้อมูลทั้งหมด (เมนู, วัตถุดิบ, และประวัติการทำงาน) เก็บไว้เป็นไฟล์สำรอง หรืออัพโหลดไฟล์เพื่อกู้คืนข้อมูลเดิมได้</p>
+
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px;">
+                    
+                    <!-- ส่วนดาวน์โหลดข้อมูล -->
+                    <div style="background: var(--bg-card); padding: 20px; border-radius: 8px; border: 1px solid var(--border-color);">
+                        <h3>📥 ดาวน์โหลดข้อมูลสำรอง</h3>
+                        <p style="font-size: 13px; color: var(--text-muted); margin: 10px 0 20px 0;">
+                            บันทึกข้อมูลปัจจุบันทั้งหมดลงในเครื่องคอมพิวเตอร์ของคุณในรูปแบบไฟล์ JSON
+                        </p>
+                        <button onclick="exportDataBackup()" style="background: var(--success, #28a745); color: white; width: 100%; padding: 10px; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">
+                            ดาวน์โหลดไฟล์สำรอง (.json)
+                        </button>
+                    </div>
+
+                    <!-- ส่วนอัพโหลดข้อมูลเพื่อกู้คืน -->
+                    <div style="background: var(--bg-card); padding: 20px; border-radius: 8px; border: 1px solid var(--border-color);">
+                        <h3>📤 กู้คืนข้อมูล (Import)</h3>
+                        <p style="font-size: 13px; color: var(--text-muted); margin: 10px 0 15px 0;">
+                            เลือกไฟล์ JSON สำรองที่เคยบันทึกไว้เพื่อนำเข้าข้อมูลเข้าสู่ระบบ
+                        </p>
+                        <input type="file" id="import-file-input" accept=".json" style="margin-bottom: 15px; width: 100%;">
+                        <button onclick="importDataBackup()" style="background: var(--warning, #ffc107); color: #000; width: 100%; padding: 10px; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">
+                            อัพโหลดและกู้คืนข้อมูล
+                        </button>
+                    </div>
+
+                </div>
+            </section>
+
+        </main>
+    </div>
+
+    <!-- Modals -->
+    <div id="material-modal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal('material-modal')">&times;</span>
+            <h2 id="mat-modal-title" style="margin-bottom: 20px;">เพิ่มวัตถุดิบ</h2>
+            <form id="material-form" onsubmit="saveMaterial(event); return false;">
+                <div class="form-group">
+                    <label for="mat-category">หมวดหมู่ / ประเภท:</label>
+                    <input type="text" id="mat-category" name="mat-category" list="material-categories-list" placeholder="พิมพ์หรือเลือกหมวดหมู่..." required autocomplete="off">
+                    <datalist id="material-categories-list"></datalist>
+                </div>
+                <div class="form-group">
+                    <label for="mat-name">ชื่อวัตถุดิบ:</label>
+                    <input type="text" id="mat-name" name="mat-name" placeholder="ระบุชื่อวัตถุดิบ" required>
+                </div>
+                <div class="form-group">
+                    <label for="mat-unit">หน่วยนับ (เช่น กรัม, ml):</label>
+                    <input type="text" id="mat-unit" name="mat-unit" placeholder="เช่น กรัม, ml" required>
+                </div>
+                <div class="form-group" id="mat-stock-group">
+                    <label for="mat-stock">จำนวนสต็อคเริ่มต้น:</label>
+                    <input type="number" id="mat-stock" name="mat-stock" placeholder="จำนวนที่มีอยู่" step="0.1">
+                </div>
+                <div class="form-group">
+                    <label for="mat-cost-per-unit">ต้นทุนต่อหน่วย (บาท):</label>
+                    <input type="number" id="mat-cost-per-unit" name="mat-cost-per-unit" placeholder="เช่น 0.5" required step="0.01" min="0">
+                </div>
+                <div class="form-group">
+                    <label for="mat-min">แจ้งเตือนเมื่อเหลือน้อยกว่า:</label>
+                    <input type="number" id="mat-min" name="mat-min" placeholder="เช่น 200" required step="0.1">
+                </div>
+                <button type="submit" class="btn-success" style="width: 100%; margin-top: 15px; font-size: 16px;">💾 บันทึกวัตถุดิบ</button>
+            </form>
+        </div>
+    </div>
+
+    <div id="stock-modal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal('stock-modal')">&times;</span>
+            <h2 style="margin-bottom: 20px;">ปรับปรุงสต็อค: <span id="adj-mat-name" style="color: var(--deep-pink);"></span></h2>
+            <form id="stock-form" onsubmit="saveStockAdjustment(event); return false;">
+                <div class="form-group">
+                    <label for="adj-type">ประเภทการทำรายการ:</label>
+                    <select id="adj-type" name="adj-type">
+                        <option value="1">➕ นำเข้าเพิ่ม</option>
+                        <option value="-1">➖ ลด / ของเสีย</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="adj-amount">จำนวน:</label>
+                    <input type="number" id="adj-amount" name="adj-amount" placeholder="ระบุจำนวนที่ต้องการปรับ" required min="0.1" step="0.1">
+                </div>
+                <button type="submit" class="btn-success" style="width: 100%; margin-top: 15px; font-size: 16px;">✅ ยืนยันการปรับสต็อค</button>
+            </form>
+        </div>
+    </div>
+
+    <div id="menu-modal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal('menu-modal')">&times;</span>
+            <h2 id="menu-modal-title" style="margin-bottom: 20px;">เพิ่มเมนู</h2>
+            <form id="menu-form" onsubmit="saveMenu(event); return false;">
+                <div class="form-group">
+                    <label for="menu-category">หมวดหมู่ / ประเภทเครื่องดื่ม:</label>
+                    <input type="text" id="menu-category" name="menu-category" list="menu-categories-list" placeholder="พิมพ์หรือเลือกหมวดหมู่..." required autocomplete="off">
+                    <datalist id="menu-categories-list"></datalist>
+                </div>
+                <div class="form-group">
+                    <label for="menu-name">ชื่อเมนู:</label>
+                    <input type="text" id="menu-name" name="menu-name" placeholder="เช่น ลาเต้เย็น" required>
+                </div>
+                <div class="form-group">
+                    <label for="menu-price">ราคาขาย (บาท):</label>
+                    <input type="number" id="menu-price" name="menu-price" placeholder="ระบุราคา" required>
+                </div>
+                <div class="recipe-section">
+                    <label style="font-weight: bold; font-size: 14px; margin-bottom: 10px; display: block; color: var(--primary-brown);">📝 สูตรชง (หักสต็อค)</label>
+                    <div id="recipe-inputs"></div>
+                    <button type="button" class="btn-warning btn-small" onclick="addRecipeRow()" style="margin-top: 10px;">+ เพิ่มวัตถุดิบ</button>
+                </div>
+                <button type="submit" class="btn-success" style="width: 100%; margin-top: 15px; font-size: 16px;">💾 บันทึกเมนู</button>
+            </form>
+        </div>
+    </div>
+
+    <div id="low-stock-modal" class="modal">
+        <div class="modal-content" style="max-width: 450px; border-top: 5px solid var(--warning);">
+            <span class="close" onclick="closeModal('low-stock-modal')">&times;</span>
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 15px;">
+                <span style="font-size: 28px;">⚠️</span>
+                <h2 style="color: var(--warning); margin: 0;">แจ้งเตือนวัตถุดิบใกล้หมด!</h2>
+            </div>
+            <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 15px;">
+                มีวัตถุดิบในคลังบางรายการที่มีปริมาณต่ำกว่าเกณฑ์หรือหมดแล้ว กรุณาตรวจสอบและเติมสต็อค:
+            </p>
+            <div id="low-stock-modal-list" style="max-height: 250px; overflow-y: auto; margin-bottom: 20px; border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; background: var(--bg-main);">
+            </div>
+            <button class="btn-success" onclick="closeModal('low-stock-modal')" style="width: 100%;">รับทราบและปิด</button>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
