@@ -9,6 +9,9 @@ let editingMenuId = null;
 let editingMaterialId = null;
 let currentStockMatId = null;
 
+// ตัวแปรเก็บข้อมูลชั่วคราวก่อนกดยืนยันชำระเงินใน POS
+let pendingCheckoutCart = null;
+
 // --- ตัวแปรสำหรับ Pagination State ---
 let paginationState = {
     menu: { page: 1 },
@@ -20,13 +23,32 @@ let paginationState = {
 // โหลดข้อมูลจาก LocalStorage หรือใช้ค่าเริ่มต้น
 function loadData() {
     menus = JSON.parse(localStorage.getItem('coffee_menus')) || [
-        { id: 1, name: 'Espresso', category: 'Coffee', price: 50, recipe: [{materialId: 1, qty: 20}] },
-        { id: 2, name: 'Latte', category: 'Coffee', price: 65, recipe: [{materialId: 1, qty: 20}, {materialId: 2, qty: 150}] }
+        { 
+            id: 1, 
+            name: 'Espresso', 
+            category: 'Coffee', 
+            price: 50, 
+            hasSweetnessLevels: false,
+            recipe: [{materialId: 1, stock: 20}] 
+        },
+        { 
+            id: 2, 
+            name: 'Latte', 
+            category: 'Coffee', 
+            price: 65, 
+            hasSweetnessLevels: true,
+            recipeByLevel: {
+                'ไม่หวาน': [{materialId: 1, stock: 20}, {materialId: 2, stock: 150}, {materialId: 3, stock: 0}],
+                'หวานน้อย': [{materialId: 1, stock: 20}, {materialId: 2, stock: 150}, {materialId: 3, stock: 10}],
+                'หวานปกติ': [{materialId: 1, stock: 20}, {materialId: 2, stock: 150}, {materialId: 3, stock: 20}],
+                'หวานมาก': [{materialId: 1, stock: 20}, {materialId: 2, stock: 150}, {materialId: 3, stock: 30}]
+            }
+        }
     ];
     materials = JSON.parse(localStorage.getItem('coffee_materials')) || [
-        { id: 1, category: 'เมล็ดกาแฟ', name: 'เมล็ดกาแฟ', qty: 1000, unit: 'กรัม', minQty: 200, costPerUnit: 0.5 },
-        { id: 2, category: 'นม', name: 'นมสด', qty: 5000, unit: 'มล.', minQty: 1000, costPerUnit: 0.05 },
-        { id: 3, category: 'ไซรัป', name: 'น้ำตาลทราย', qty: 2000, unit: 'กรัม', minQty: 500, costPerUnit: 0.02 }
+        { id: 1, category: 'เมล็ดกาแฟ', name: 'เมล็ดกาแฟ', stock: 1000, unit: 'กรัม', minStock: 200, costPerUnit: 0.5 },
+        { id: 2, category: 'นม', name: 'นมสด', stock: 5000, unit: 'มล.', minStock: 1000, costPerUnit: 0.05 },
+        { id: 3, category: 'ไซรัป', name: 'ไซรัป/น้ำตาล', stock: 2000, unit: 'มล.', minStock: 500, costPerUnit: 0.1 }
     ];
     historyLogs = JSON.parse(localStorage.getItem('coffee_history')) || [];
 }
@@ -42,7 +64,71 @@ document.addEventListener('DOMContentLoaded', () => {
     initTheme();
     loadData();
     checkLoginState();
+    injectSweetnessModals(); // ฉีด HTML Modal เลือกระดับความหวานเข้าสู่หน้าเว็บ
 });
+
+// --- ฉีดโครงสร้าง HTML สำหรับ Modal เลือกระดับความหวาน (ถ้ายังไม่มี) ---
+function injectSweetnessModals() {
+    if (document.getElementById('sweetness-modal')) return;
+
+    const modalHTML = `
+    <!-- Modal เลือกระดับความหวานตอนเพิ่ม/แก้ไขเมนู -->
+    <div id="recipe-sweetness-modal" class="modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; justify-content:center; align-items:center;">
+        <div class="modal-content" style="background:var(--bg-card); padding:20px; border-radius:8px; width:90%; max-width:600px; max-height:90vh; overflow-y:auto;">
+            <h3>กำหนดสูตรตามระดับความหวาน</h3>
+            <p style="font-size:13px; color:var(--text-muted); margin-bottom:15px;">กรอกปริมาณวัตถุดิบแยกตามระดับความหวานแต่ละระดับ</p>
+            
+            <div id="sweetness-recipe-tabs" style="display:flex; gap:5px; margin-bottom:15px; border-bottom:1px solid var(--border-color); padding-bottom:10px;">
+                <button type="button" class="btn-small active" onclick="switchSweetTab('ไม่หวาน', this)">ไม่หวาน</button>
+                <button type="button" class="btn-small" onclick="switchSweetTab('หวานน้อย', this)">หวานน้อย</button>
+                <button type="button" class="btn-small" onclick="switchSweetTab('หวานปกติ', this)">หวานปกติ</button>
+                <button type="button" class="btn-small" onclick="switchSweetTab('หวานมาก', this)">หวานมาก</button>
+            </div>
+
+            <div id="sweetness-recipe-containers">
+                <div class="sweet-tab-pane" data-level="ไม่หวาน">
+                    <div class="recipe-inputs-list" data-level="ไม่หวาน"></div>
+                    <button type="button" class="btn-small" onclick="addRecipeRowForLevel('ไม่หวาน')" style="margin-top:10px;">+ เพิ่มวัตถุดิบ (ไม่หวาน)</button>
+                </div>
+                <div class="sweet-tab-pane" data-level="หวานน้อย" style="display:none;">
+                    <div class="recipe-inputs-list" data-level="หวานน้อย"></div>
+                    <button type="button" class="btn-small" onclick="addRecipeRowForLevel('หวานน้อย')" style="margin-top:10px;">+ เพิ่มวัตถุดิบ (หวานน้อย)</button>
+                </div>
+                <div class="sweet-tab-pane" data-level="หวานปกติ" style="display:none;">
+                    <div class="recipe-inputs-list" data-level="หวานปกติ"></div>
+                    <button type="button" class="btn-small" onclick="addRecipeRowForLevel('หวานปกติ')" style="margin-top:10px;">+ เพิ่มวัตถุดิบ (หวานปกติ)</button>
+                </div>
+                <div class="sweet-tab-pane" data-level="หวานมาก" style="display:none;">
+                    <div class="recipe-inputs-list" data-level="หวานมาก"></div>
+                    <button type="button" class="btn-small" onclick="addRecipeRowForLevel('หวานมาก')" style="margin-top:10px;">+ เพิ่มวัตถุดิบ (หวานมาก)</button>
+                </div>
+            </div>
+
+            <div style="margin-top:20px; text-align:right;">
+                <button type="button" class="btn-warning" onclick="closeModal('recipe-sweetness-modal')">เสร็จสิ้น</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal เลือกระดับความหวานตอนกดชำระเงินใน POS -->
+    <div id="checkout-sweetness-modal" class="modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; justify-content:center; align-items:center;">
+        <div class="modal-content" style="background:var(--bg-card); padding:20px; border-radius:8px; width:90%; max-width:500px; max-height:90vh; overflow-y:auto;">
+            <h3>เลือกระดับความหวานสำหรับรายการสินค้า</h3>
+            <p style="font-size:13px; color:var(--text-muted); margin-bottom:15px;">โปรดกำหนดระดับความหวานสำหรับเมนูที่มีการควบคุมความหวาน</p>
+            
+            <div id="checkout-sweetness-list" style="margin-bottom:20px;">
+                <!-- จะถูกเติมด้วย Javascript -->
+            </div>
+
+            <div style="display:flex; justify-content:flex-end; gap:10px;">
+                <button type="button" class="btn-danger" onclick="closeModal('checkout-sweetness-modal')">ยกเลิก</button>
+                <button type="button" class="btn-success" onclick="confirmCheckoutWithSweetness()">ยืนยันชำระเงิน</button>
+            </div>
+        </div>
+    </div>
+    `;
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
+}
 
 // --- 2. ระบบ Login / Logout ---
 function handleLogin(event) {
@@ -154,8 +240,6 @@ function updateDashboard() {
     const todaySalesLogs = historyLogs.filter(log => log.type === 'sales' && log.timestamp.includes(todayStr));
     
     let totalSalesToday = 0;
-    let totalCupsToday = 0;
-
     todaySalesLogs.forEach(log => {
         if(log.detail) {
             const matchPrice = log.detail.match(/ยอดรวม:\s*([\d.]+)\s*บาท/);
@@ -178,12 +262,12 @@ function updateDashboard() {
     let lowStockListHTML = '';
 
     materials.forEach(m => {
-        if (m.qty <= 0) {
+        if (m.stock <= 0) {
             empty++;
-            lowStockListHTML += `<li style="color:var(--danger); font-size:13px; margin-bottom:5px;">❌ ${m.name} หมดแล้ว (เหลือ ${m.qty} ${m.unit})</li>`;
-        } else if (m.qty <= m.minQty) {
+            lowStockListHTML += `<li style="color:var(--danger); font-size:13px; margin-bottom:5px;">❌ ${m.name} หมดแล้ว (เหลือ ${m.stock} ${m.unit})</li>`;
+        } else if (m.stock <= m.minStock) {
             warn++;
-            lowStockListHTML += `<li style="color:var(--warning); font-size:13px; margin-bottom:5px;">⚠️ ${m.name} ใกล้หมด (เหลือ ${m.qty} ${m.unit})</li>`;
+            lowStockListHTML += `<li style="color:var(--warning); font-size:13px; margin-bottom:5px;">⚠️ ${m.name} ใกล้หมด (เหลือ ${m.stock} ${m.unit})</li>`;
         } else {
             normal++;
         }
@@ -204,14 +288,14 @@ function updateDashboard() {
 }
 
 function checkLowStockAlert() {
-    const hasLowStock = materials.some(m => m.qty <= m.minQty);
+    const hasLowStock = materials.some(m => m.stock <= m.minStock);
     if (hasLowStock) {
         const lowStockModal = document.getElementById('low-stock-modal');
         const lowStockModalList = document.getElementById('low-stock-modal-list');
         if (lowStockModal && lowStockModalList) {
             lowStockModalList.innerHTML = materials
-                .filter(m => m.qty <= m.minQty)
-                .map(m => `<div style="padding: 5px 0; border-bottom: 1px dashed var(--border-color);">${m.name}: เหลือ ${m.qty} ${m.unit} (ขั้นต่ำ ${m.minQty})</div>`)
+                .filter(m => m.stock <= m.minStock)
+                .map(m => `<div style="padding: 5px 0; border-bottom: 1px dashed var(--border-color);">${m.name}: เหลือ ${m.stock} ${m.unit} (ขั้นต่ำ ${m.minStock})</div>`)
                 .join('');
             lowStockModal.style.display = 'flex';
         }
@@ -231,7 +315,7 @@ function updateTopSellingMenus() {
                 items.forEach(item => {
                     const parts = item.trim().split(' x');
                     if (parts.length === 2) {
-                        const name = parts[0].trim();
+                        const name = parts[0].split('(')[0].trim();
                         const qty = parseInt(parts[1]) || 1;
                         salesCountMap[name] = (salesCountMap[name] || 0) + qty;
                     }
@@ -255,7 +339,6 @@ function updateTopSellingMenus() {
     `).join('');
 }
 
-// ฟังก์ชันคำนวณและแสดงผลการใช้วัตถุดิบตามช่วงเวลา
 function updateMaterialUsageStats() {
     const usageTodayEl = document.getElementById('usage-today-list');
     const usage7DaysEl = document.getElementById('usage-7days-list');
@@ -282,15 +365,30 @@ function updateMaterialUsageStats() {
                 items.forEach(item => {
                     const parts = item.trim().split(' x');
                     if (parts.length === 2) {
-                        const menuName = parts[0].trim();
+                        const rawName = parts[0].trim();
                         const qtySold = parseInt(parts[1]) || 1;
 
+                        let menuName = rawName;
+                        let sweetLevel = 'หวานปกติ';
+                        const matchSweet = rawName.match(/(.*?)\s*\((.*?)\)$/);
+                        if (matchSweet) {
+                            menuName = matchSweet[1].trim();
+                            sweetLevel = matchSweet[2].trim();
+                        }
+
                         const menu = menus.find(m => m.name === menuName);
-                        if (menu && menu.recipe) {
-                            menu.recipe.forEach(rec => {
+                        if (menu) {
+                            let activeRecipe = [];
+                            if (menu.hasSweetnessLevels && menu.recipeByLevel && menu.recipeByLevel[sweetLevel]) {
+                                activeRecipe = menu.recipeByLevel[sweetLevel];
+                            } else if (menu.recipe) {
+                                activeRecipe = menu.recipe;
+                            }
+
+                            activeRecipe.forEach(rec => {
                                 const mat = materials.find(m => m.id === parseInt(rec.materialId));
                                 if (mat) {
-                                    const totalUsed = rec.qty * qtySold;
+                                    const totalUsed = rec.stock * qtySold;
                                     if (logTime >= startOf30Days) {
                                         usage30DaysMap[mat.name] = (usage30DaysMap[mat.name] || 0) + totalUsed;
                                     }
@@ -382,11 +480,21 @@ function renderPOSMenu() {
 function addToCart(menuId) {
     const menu = menus.find(m => m.id === menuId);
     if (!menu) return;
-    const existing = cart.find(item => item.id === menuId);
+
+    const defaultSweet = menu.hasSweetnessLevels ? 'หวานปกติ' : null;
+
+    const existing = cart.find(item => item.id === menuId && item.sweetness === defaultSweet);
     if (existing) {
         existing.qty += 1;
     } else {
-        cart.push({ id: menu.id, name: menu.name, price: menu.price, qty: 1 });
+        cart.push({ 
+            id: menu.id, 
+            name: menu.name, 
+            price: menu.price, 
+            qty: 1, 
+            hasSweetnessLevels: menu.hasSweetnessLevels,
+            sweetness: defaultSweet 
+        });
     }
     renderCart();
 }
@@ -405,16 +513,26 @@ function renderCart() {
     container.innerHTML = cart.map((item, index) => {
         total += item.price * item.qty;
         return `
-        <div class="cart-item">
+        <div class="cart-item" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; border-bottom:1px solid var(--border-color); padding-bottom:6px;">
             <div class="cart-item-info">
                 <strong>${item.name}</strong><br>
                 <small>${item.price} ฿ x ${item.qty}</small>
+                ${item.hasSweetnessLevels ? `
+                    <div style="margin-top:2px;">
+                        <select onchange="updateCartSweetness(${index}, this.value)" style="font-size:11px; padding:2px;">
+                            <option value="ไม่หวาน" ${item.sweetness === 'ไม่หวาน' ? 'selected' : ''}>ไม่หวาน</option>
+                            <option value="หวานน้อย" ${item.sweetness === 'หวานน้อย' ? 'selected' : ''}>หวานน้อย</option>
+                            <option value="หวานปกติ" ${item.sweetness === 'หวานปกติ' ? 'selected' : ''}>หวานปกติ</option>
+                            <option value="หวานมาก" ${item.sweetness === 'หวานมาก' ? 'selected' : ''}>หวานมาก</option>
+                        </select>
+                    </div>
+                ` : ''}
             </div>
-            <div class="cart-item-actions">
+            <div class="cart-item-actions" style="display:flex; align-items:center; gap:4px;">
                 <button class="qty-btn" onclick="updateCartQty(${index}, -1)">-</button>
                 <span>${item.qty}</span>
                 <button class="qty-btn" onclick="updateCartQty(${index}, 1)">+</button>
-                <button onclick="removeFromCart(${index})" class="btn-danger btn-small" style="padding:2px 6px; margin-left:5px;">X</button>
+                <button onclick="removeFromCart(${index})" class="btn-danger btn-small" style="padding:2px 6px;">X</button>
             </div>
         </div>`;
     }).join('');
@@ -429,6 +547,10 @@ function updateCartQty(index, change) {
     renderCart();
 }
 
+function updateCartSweetness(index, val) {
+    cart[index].sweetness = val;
+}
+
 function removeFromCart(index) {
     cart.splice(index, 1);
     renderCart();
@@ -440,33 +562,89 @@ function checkoutDailySales() {
         return;
     }
 
-    for (let cartItem of cart) {
+    pendingCheckoutCart = JSON.parse(JSON.stringify(cart));
+    
+    const sweetnessListContainer = document.getElementById('checkout-sweetness-list');
+    let htmlContent = '';
+
+    pendingCheckoutCart.forEach((item, idx) => {
+        if (item.hasSweetnessLevels) {
+            htmlContent += `
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; padding-bottom:8px; border-bottom:1px dashed var(--border-color);">
+                    <span><strong>${item.name}</strong> (x${item.qty})</span>
+                    <select id="checkout-sweet-${idx}" style="padding:5px; border-radius:4px; border:1px solid var(--border-color);">
+                        <option value="ไม่หวาน" ${item.sweetness === 'ไม่หวาน' ? 'selected' : ''}>ไม่หวาน</option>
+                        <option value="หวานน้อย" ${item.sweetness === 'หวานน้อย' ? 'selected' : ''}>หวานน้อย</option>
+                        <option value="หวานปกติ" ${item.sweetness === 'หวานปกติ' ? 'selected' : ''}>หวานปกติ</option>
+                        <option value="หวานมาก" ${item.sweetness === 'หวานมาก' ? 'selected' : ''}>หวานมาก</option>
+                    </select>
+                </div>
+            `;
+        } else {
+            htmlContent += `
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; padding-bottom:8px; border-bottom:1px dashed var(--border-color);">
+                    <span><strong>${item.name}</strong> (x${item.qty})</span>
+                    <span style="font-size:12px; color:var(--text-muted);">สูตรปกติ (ไม่ปรับความหวาน)</span>
+                </div>
+            `;
+        }
+    });
+
+    sweetnessListContainer.innerHTML = htmlContent;
+    document.getElementById('checkout-sweetness-modal').style.display = 'flex';
+}
+
+function confirmCheckoutWithSweetness() {
+    pendingCheckoutCart.forEach((item, idx) => {
+        if (item.hasSweetnessLevels) {
+            const selectEl = document.getElementById(`checkout-sweet-${idx}`);
+            if (selectEl) {
+                item.sweetness = selectEl.value;
+            }
+        }
+    });
+
+    for (let cartItem of pendingCheckoutCart) {
         const menu = menus.find(m => m.id === cartItem.id);
-        if (menu && menu.recipe) {
-            for (let rec of menu.recipe) {
+        if (menu) {
+            let activeRecipe = [];
+            if (menu.hasSweetnessLevels && menu.recipeByLevel && menu.recipeByLevel[cartItem.sweetness]) {
+                activeRecipe = menu.recipeByLevel[cartItem.sweetness];
+            } else if (menu.recipe) {
+                activeRecipe = menu.recipe;
+            }
+
+            for (let rec of activeRecipe) {
                 const mat = materials.find(m => m.id === parseInt(rec.materialId));
-                if (mat && mat.qty < (rec.qty * cartItem.qty)) {
-                    Swal.fire('วัตถุดิบไม่พอ', `วัตถุดิบ "${mat.name}" คงเหลือไม่เพียงพอสำหรับทำ ${menu.name}`, 'error');
+                if (mat && mat.stock < (rec.stock * cartItem.qty)) {
+                    Swal.fire('วัตถุดิบไม่พอ', `วัตถุดิบ "${mat.name}" คงเหลือไม่เพียงพอสำหรับทำ ${menu.name} (${cartItem.sweetness})`, 'error');
                     return;
                 }
             }
         }
     }
 
-    cart.forEach(cartItem => {
+    pendingCheckoutCart.forEach(cartItem => {
         const menu = menus.find(m => m.id === cartItem.id);
-        if (menu && menu.recipe) {
-            menu.recipe.forEach(rec => {
+        if (menu) {
+            let activeRecipe = [];
+            if (menu.hasSweetnessLevels && menu.recipeByLevel && menu.recipeByLevel[cartItem.sweetness]) {
+                activeRecipe = menu.recipeByLevel[cartItem.sweetness];
+            } else if (menu.recipe) {
+                activeRecipe = menu.recipe;
+            }
+
+            activeRecipe.forEach(rec => {
                 const mat = materials.find(m => m.id === parseInt(rec.materialId));
                 if (mat) {
-                    mat.qty -= (rec.qty * cartItem.qty);
+                    mat.stock -= (rec.stock * cartItem.qty);
                 }
             });
         }
     });
 
-    const total = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
-    const summaryStr = cart.map(i => `${i.name} x${i.qty}`).join(', ');
+    const total = pendingCheckoutCart.reduce((sum, item) => sum + (item.price * item.qty), 0);
+    const summaryStr = pendingCheckoutCart.map(i => i.hasSweetnessLevels ? `${i.name}(${i.sweetness}) x${i.qty}` : `${i.name} x${i.qty}`).join(', ');
 
     addHistoryLog('ขายสินค้า', 'สรุปยอดขายประจำวัน', `รายการ: [${summaryStr}] | ยอดรวม: ${total} บาท`, 'sales');
     
@@ -476,6 +654,7 @@ function checkoutDailySales() {
     updateDashboard();
     renderMaterialTable();
     checkLowStockAlert();
+    closeModal('checkout-sweetness-modal');
     
     Swal.fire('สำเร็จ', 'บันทึกยอดขายและตัดสต็อกเรียบร้อยแล้ว', 'success');
 }
@@ -496,11 +675,29 @@ function updateCategoryDatalists() {
     }
 }
 
+let tempRecipeByLevel = {
+    'ไม่หวาน': [],
+    'หวานน้อย': [],
+    'หวานปกติ': [],
+    'หวานมาก': []
+};
+let tempHasSweetness = false;
+
 window.openMenuModal = function(id = null) {
     updateCategoryDatalists();
     document.getElementById('menu-form').reset();
-    document.getElementById('recipe-inputs').innerHTML = '';
     
+    tempRecipeByLevel = {
+        'ไม่หวาน': [],
+        'หวานน้อย': [],
+        'หวานปกติ': [],
+        'หวานมาก': []
+    };
+    tempHasSweetness = false;
+    const checkboxSweet = document.getElementById('menu-has-sweetness');
+    if (checkboxSweet) checkboxSweet.checked = false;
+    toggleSweetnessSection(false);
+
     const titleEl = document.getElementById('menu-modal-title');
     if (id) {
         editingMenuId = id;
@@ -511,27 +708,75 @@ window.openMenuModal = function(id = null) {
             document.getElementById('menu-name').value = menu.name || '';
             document.getElementById('menu-price').value = menu.price || '';
             
-            if (menu.recipe && menu.recipe.length > 0) {
-                menu.recipe.forEach(rec => {
-                    addRecipeRow(rec.materialId, rec.qty);
-                });
+            if (menu.hasSweetnessLevels) {
+                tempHasSweetness = true;
+                if (checkboxSweet) checkboxSweet.checked = true;
+                toggleSweetnessSection(true);
+                tempRecipeByLevel = JSON.parse(JSON.stringify(menu.recipeByLevel || tempRecipeByLevel));
             } else {
-                addRecipeRow();
+                if (menu.recipe) {
+                    tempRecipeByLevel['หวานปกติ'] = JSON.parse(JSON.stringify(menu.recipe));
+                }
             }
+            renderAllLevelRecipeRows();
         }
     } else {
         editingMenuId = null;
         titleEl.textContent = 'เพิ่มเมนูใหม่';
-        addRecipeRow();
+        renderAllLevelRecipeRows();
     }
     document.getElementById('menu-modal').style.display = 'flex';
 };
 
-function addRecipeRow(materialId = '', qty = '') {
-    const container = document.getElementById('recipe-inputs');
-    if (!container) return;
-    
-    const rowId = 'recipe-row-' + Date.now() + Math.random().toString(36).substring(2, 5);
+function toggleSweetnessSection(enabled) {
+    tempHasSweetness = enabled;
+    const btnOpenSweetModal = document.getElementById('btn-open-sweet-modal');
+    if (btnOpenSweetModal) {
+        btnOpenSweetModal.style.display = enabled ? 'inline-block' : 'none';
+    }
+}
+
+function openRecipeSweetnessModal() {
+    document.getElementById('recipe-sweetness-modal').style.display = 'flex';
+    renderAllLevelRecipeRows();
+}
+
+function switchSweetTab(levelName, btnEl) {
+    document.querySelectorAll('#sweetness-recipe-tabs button').forEach(b => b.classList.remove('active'));
+    btnEl.classList.add('active');
+
+    document.querySelectorAll('.sweet-tab-pane').forEach(pane => {
+        if (pane.getAttribute('data-level') === levelName) {
+            pane.style.display = 'block';
+        } else {
+            pane.style.display = 'none';
+        }
+    });
+}
+
+function renderAllLevelRecipeRows() {
+    ['ไม่หวาน', 'หวานน้อย', 'หวานปกติ', 'หวานมาก'].forEach(level => {
+        const container = document.querySelector(`.recipe-inputs-list[data-level="${level}"]`);
+        if (!container) return;
+        container.innerHTML = '';
+        
+        if (tempRecipeByLevel[level] && tempRecipeByLevel[level].length > 0) {
+            tempRecipeByLevel[level].forEach(rec => {
+                appendRecipeRowDOM(container, level, rec.materialId, rec.stock);
+            });
+        }
+    });
+}
+
+function addRecipeRowForLevel(level) {
+    const container = document.querySelector(`.recipe-inputs-list[data-level="${level}"]`);
+    if (container) {
+        appendRecipeRowDOM(container, level, '', '');
+    }
+}
+
+function appendRecipeRowDOM(container, level, materialId = '', stock = '') {
+    const rowId = 'recipe-' + level + '-' + Date.now() + Math.random().toString(36).substring(2, 5);
     const materialOptions = materials.map(m => `<option value="${m.name}" data-id="${m.id}">${m.unit ? '(' + m.unit + ')' : ''}</option>`).join('');
     
     let currentMatName = '';
@@ -541,7 +786,7 @@ function addRecipeRow(materialId = '', qty = '') {
     }
 
     const div = document.createElement('div');
-    div.className = 'recipe-row';
+    div.className = 'recipe-row-item';
     div.style.cssText = 'display: flex; gap: 10px; margin-bottom: 8px; align-items: center;';
     div.id = rowId;
     
@@ -554,7 +799,7 @@ function addRecipeRow(materialId = '', qty = '') {
             <input type="hidden" class="recipe-mat-id" value="${materialId}">
         </div>
         <div style="flex: 1;">
-            <input type="number" class="recipe-qty" placeholder="ปริมาณ" value="${qty}" step="0.01" min="0.01" style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 6px;" required>
+            <input type="number" class="recipe-qty" placeholder="ปริมาณ" value="${stock}" step="0.01" min="0.01" style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 6px;" required>
         </div>
         <button type="button" class="btn-danger btn-small" onclick="document.getElementById('${rowId}').remove()" style="padding: 8px 12px; cursor: pointer;">✕</button>
     `;
@@ -573,6 +818,30 @@ function addRecipeRow(materialId = '', qty = '') {
             hiddenIdInput.value = '';
         }
     });
+}
+
+function collectRecipeFromDOM() {
+    let result = {
+        'ไม่หวาน': [],
+        'หวานน้อย': [],
+        'หวานปกติ': [],
+        'หวานมาก': []
+    };
+
+    ['ไม่หวาน', 'หวานน้อย', 'หวานปกติ', 'หวานมาก'].forEach(level => {
+        const container = document.querySelector(`.recipe-inputs-list[data-level="${level}"]`);
+        if (container) {
+            const rows = container.querySelectorAll('.recipe-row-item');
+            rows.forEach(row => {
+                const matId = row.querySelector('.recipe-mat-id').value;
+                const stockVal = row.querySelector('.recipe-qty').value;
+                if (matId && stockVal) {
+                    result[level].push({ materialId: parseInt(matId), stock: parseFloat(stockVal) });
+                }
+            });
+        }
+    });
+    return result;
 }
 
 function renderMenuTable() {
@@ -595,17 +864,22 @@ function renderMenuTable() {
 
     tbody.innerHTML = paginated.length === 0 ? `<tr><td colspan="5" style="text-align:center; color:var(--text-muted);">ไม่พบข้อมูลเมนู</td></tr>` : 
         paginated.map(m => {
-            const recipeStr = m.recipe ? m.recipe.map(r => {
-                const mat = materials.find(mat => mat.id == r.materialId);
-                return mat ? `${mat.name} (${r.qty} ${mat.unit})` : '';
-            }).filter(Boolean).join(', ') : 'ไม่มีสูตร';
+            let recipeStr = '';
+            if (m.hasSweetnessLevels) {
+                recipeStr = '<em>แยกตามระดับความหวาน</em>';
+            } else if (m.recipe) {
+                recipeStr = m.recipe.map(r => {
+                    const mat = materials.find(mat => mat.id == r.materialId);
+                    return mat ? `${mat.name} (${r.stock} ${mat.unit})` : '';
+                }).filter(Boolean).join(', ');
+            }
 
             return `
                 <tr>
                     <td><span class="cat-tag">${m.category || 'ทั่วไป'}</span></td>
-                    <td><strong>${m.name}</strong></td>
+                    <td><strong>${m.name}</strong> ${m.hasSweetnessLevels ? '<span style="font-size:10px; background:var(--primary); color:#fff; padding:2px 4px; border-radius:4px;">ปรับความหวานได้</span>' : ''}</td>
                     <td>${m.price} บาท</td>
-                    <td style="font-size: 12px; color: var(--text-muted);">${recipeStr}</td>
+                    <td style="font-size: 12px; color: var(--text-muted);">${recipeStr || 'ไม่มีสูตร'}</td>
                     <td>
                         <button onclick="openMenuModal(${m.id})" class="btn-warning btn-small" style="margin-right:5px;">แก้ไข</button>
                         <button onclick="deleteMenu(${m.id})" class="btn-danger btn-small">ลบ</button>
@@ -622,16 +896,10 @@ function saveMenu(event) {
     const category = document.getElementById('menu-category').value.trim();
     const name = document.getElementById('menu-name').value.trim();
     const price = parseFloat(document.getElementById('menu-price').value);
+    const hasSweetness = document.getElementById('menu-has-sweetness').checked;
 
-    const recipeRows = document.querySelectorAll('.recipe-row');
-    let recipe = [];
-    recipeRows.forEach(row => {
-        const matId = row.querySelector('.recipe-mat-id').value;
-        const qty = row.querySelector('.recipe-qty').value;
-        if (matId && qty) {
-            recipe.push({ materialId: parseInt(matId), qty: parseFloat(qty) });
-        }
-    });
+    let recipeByLevel = collectRecipeFromDOM();
+    let standardRecipe = recipeByLevel['หวานปกติ'] || [];
 
     if (editingMenuId) {
         const menu = menus.find(m => m.id === editingMenuId);
@@ -639,7 +907,14 @@ function saveMenu(event) {
             menu.category = category;
             menu.name = name;
             menu.price = price;
-            menu.recipe = recipe;
+            menu.hasSweetnessLevels = hasSweetness;
+            if (hasSweetness) {
+                menu.recipeByLevel = recipeByLevel;
+                delete menu.recipe;
+            } else {
+                menu.recipe = standardRecipe;
+                delete menu.recipeByLevel;
+            }
             addHistoryLog('จัดการระบบ', 'แก้ไขเมนู', `แก้ไขเมนู: ${name} (${price} บาท)`);
             Swal.fire('สำเร็จ', 'แก้ไขเมนูเรียบร้อย', 'success');
         }
@@ -649,7 +924,8 @@ function saveMenu(event) {
             category,
             name,
             price,
-            recipe
+            hasSweetnessLevels: hasSweetness,
+            ...(hasSweetness ? { recipeByLevel } : { recipe: standardRecipe })
         };
         menus.push(newMenu);
         addHistoryLog('จัดการระบบ', 'เพิ่มเมนู', `เพิ่มเมนูใหม่: ${name} (${price} บาท)`);
@@ -681,7 +957,7 @@ function deleteMenu(id) {
     });
 }
 
-// --- 9. หน้าจัดการวัตถุดิบ (เพิ่ม / แก้ไข / ลบ / ปรับสต็อก) ---
+// --- 9. หน้าจัดการวัตถุดิบ ---
 window.openMaterialModal = function(id = null) {
     updateCategoryDatalists();
     document.getElementById('material-form').reset();
@@ -699,7 +975,7 @@ window.openMaterialModal = function(id = null) {
             document.getElementById('mat-name').value = mat.name || '';
             document.getElementById('mat-unit').value = mat.unit || '';
             document.getElementById('mat-cost-per-unit').value = mat.costPerUnit || 0;
-            document.getElementById('mat-min').value = mat.minQty || 0;
+            document.getElementById('mat-min').value = mat.minStock || 0;
         }
     } else {
         editingMaterialId = null;
@@ -730,19 +1006,19 @@ function renderMaterialTable() {
     tbody.innerHTML = paginated.length === 0 ? `<tr><td colspan="8" style="text-align:center; color:var(--text-muted);">ไม่พบข้อมูลวัตถุดิบ</td></tr>` : 
         paginated.map(m => {
             let badgeColor = 'var(--success)';
-            if (m.qty <= 0) badgeColor = 'var(--danger)';
-            else if (m.qty <= m.minQty) badgeColor = 'var(--warning)';
+            if (m.stock <= 0) badgeColor = 'var(--danger)';
+            else if (m.stock <= m.minStock) badgeColor = 'var(--warning)';
 
             const costPerUnit = parseFloat(m.costPerUnit || 0);
-            const totalCost = (m.qty * costPerUnit).toFixed(2);
+            const totalCost = (m.stock * costPerUnit).toFixed(2);
 
             return `
             <tr>
                 <td><span class="cat-tag">${m.category || 'ทั่วไป'}</span></td>
                 <td><strong>${m.name}</strong></td>
-                <td><strong style="color:${badgeColor}">${m.qty}</strong></td>
+                <td><strong style="color:${badgeColor}">${m.stock}</strong></td>
                 <td>${m.unit}</td>
-                <td>${m.minQty}</td>
+                <td>${m.minStock}</td>
                 <td>${costPerUnit.toFixed(2)} ฿</td>
                 <td><strong>${totalCost} ฿</strong></td>
                 <td>
@@ -770,7 +1046,7 @@ function saveMaterial(event) {
             mat.category = category;
             mat.name = name;
             mat.unit = unit;
-            mat.minQty = min;
+            mat.minStock = min;
             mat.costPerUnit = cost;
             addHistoryLog('จัดการระบบ', 'แก้ไขวัตถุดิบ', `แก้ไขวัตถุดิบ: ${name}`);
             Swal.fire('สำเร็จ', 'แก้ไขวัตถุดิบเรียบร้อย', 'success');
@@ -782,8 +1058,8 @@ function saveMaterial(event) {
             category,
             name,
             unit,
-            qty: stock,
-            minQty: min,
+            stock: stock,
+            minStock: min,
             costPerUnit: cost
         };
         materials.push(newMat);
@@ -812,8 +1088,8 @@ function saveStockAdjustment(event) {
     
     const mat = materials.find(m => m.id === currentStockMatId);
     if (mat) {
-        mat.qty += (type * amount);
-        if (mat.qty < 0) mat.qty = 0;
+        mat.stock += (type * amount);
+        if (mat.stock < 0) mat.stock = 0;
         saveData();
         renderMaterialTable();
         updateDashboard();
@@ -914,7 +1190,6 @@ function renderSystemHistoryTable() {
     updatePaginationUI('histSys', totalData, limit, totalPages);
 }
 
-// --- ฟังก์ชันกลางสำหรับสร้างปุ่ม Pagination UI ---
 function updatePaginationUI(type, totalData, limit, totalPages) {
     const infoEl = document.getElementById(`${type === 'histSys' ? 'hist-sys' : type}-page-info`);
     const btnContainer = document.getElementById(`${type === 'histSys' ? 'hist-sys' : type}-pagination`);
@@ -950,7 +1225,7 @@ function changeTablePage(type, targetPage) {
     else if (type === 'histSys') renderSystemHistoryTable();
 }
 
-// --- 11. กราฟยอดขาย 7 วันย้อนหลัง ---
+// --- 11. กราฟยอดขาย ---
 function renderSalesChart() {
     const canvas = document.getElementById('salesChart');
     if (!canvas) return;
@@ -1030,7 +1305,7 @@ function resetData() {
         }
     });
 }
-// --- ฟังก์ชันดาวน์โหลดข้อมูลสำรอง (Export) ---
+
 function exportDataBackup() {
     try {
         const backupData = {
@@ -1057,26 +1332,16 @@ function exportDataBackup() {
 
         if (typeof Swal !== 'undefined') {
             Swal.fire('สำเร็จ', 'ดาวน์โหลดข้อมูลสำรองเรียบร้อยแล้ว', 'success');
-        } else {
-            alert('ดาวน์โหลดข้อมูลสำรองเรียบร้อยแล้ว');
         }
     } catch (error) {
         console.error(error);
-        if (typeof Swal !== 'undefined') {
-            Swal.fire('เกิดข้อผิดพลาด', 'ไม่สามารถดาวน์โหลดข้อมูลได้', 'error');
-        }
     }
 }
 
-// --- ฟังก์ชันอัพโหลดและกู้คืนข้อมูล (Import) ---
 function importDataBackup() {
     const fileInput = document.getElementById('import-file-input');
     if (!fileInput || fileInput.files.length === 0) {
-        if (typeof Swal !== 'undefined') {
-            Swal.fire('แจ้งเตือน', 'กรุณาเลือกไฟล์ JSON ที่ต้องการอัพโหลด', 'warning');
-        } else {
-            alert('กรุณาเลือกไฟล์ JSON ที่ต้องการอัพโหลด');
-        }
+        Swal.fire('แจ้งเตือน', 'กรุณาเลือกไฟล์ JSON ที่ต้องการอัพโหลด', 'warning');
         return;
     }
 
@@ -1087,59 +1352,41 @@ function importDataBackup() {
         try {
             const parsedData = JSON.parse(event.target.result);
 
-            // ตรวจสอบโครงสร้างข้อมูลเบื้องต้น
             if (!parsedData.menus || !parsedData.materials) {
                 throw new Error('รูปแบบไฟล์ไม่ถูกต้อง');
             }
 
-            if (typeof Swal !== 'undefined') {
-                Swal.fire({
-                    title: 'ยืนยันการกู้คืนข้อมูล?',
-                    text: "ข้อมูลปัจจุบันทั้งหมดจะถูกแทนที่ด้วยข้อมูลจากไฟล์สำรอง!",
-                    icon: 'warning',
-                    showCancelButton: true,
-                    confirmButtonColor: '#3085d6',
-                    cancelButtonColor: '#d33',
-                    confirmButtonText: 'ยืนยันกู้คืน',
-                    cancelButtonText: 'ยกเลิก'
-                }).then((result) => {
-                    if (result.isConfirmed) {
-                        applyImportedData(parsedData);
-                    }
-                });
-            } else {
-                if (confirm('ยืนยันการกู้คืนข้อมูล? ข้อมูลปัจจุบันจะถูกแทนที่')) {
+            Swal.fire({
+                title: 'ยืนยันการกู้คืนข้อมูล?',
+                text: "ข้อมูลปัจจุบันทั้งหมดจะถูกแทนที่ด้วยข้อมูลจากไฟล์สำรอง!",
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#3085d6',
+                cancelButtonColor: '#d33',
+                confirmButtonText: 'ยืนยันกู้คืน',
+                cancelButtonText: 'ยกเลิก'
+            }).then((result) => {
+                if (result.isConfirmed) {
                     applyImportedData(parsedData);
                 }
-            }
+            });
         } catch (e) {
-            console.error(e);
-            if (typeof Swal !== 'undefined') {
-                Swal.fire('ผิดพลาด', 'ไฟล์ข้อมูลไม่ถูกต้องหรือเสียหาย', 'error');
-            } else {
-                alert('ไฟล์ข้อมูลไม่ถูกต้องหรือเสียหาย');
-            }
+            Swal.fire('ผิดพลาด', 'ไฟล์ข้อมูลไม่ถูกต้องหรือเสียหาย', 'error');
         }
     };
 
     reader.readAsText(file);
 }
 
-// ฟังก์ชันช่วยบันทึกข้อมูลที่อัพโหลดลง LocalStorage และรีเฟรชหน้าจอ
 function applyImportedData(data) {
     localStorage.setItem('coffee_menus', JSON.stringify(data.menus));
     localStorage.setItem('coffee_materials', JSON.stringify(data.materials));
     localStorage.setItem('coffee_history', JSON.stringify(data.history || []));
 
-    if (typeof loadData === 'function') loadData();
-    if (typeof initializeAppUI === 'function') initializeAppUI();
+    loadData();
+    initializeAppUI();
 
-    if (typeof Swal !== 'undefined') {
-        Swal.fire('สำเร็จ', 'กู้คืนข้อมูลเรียบร้อยแล้ว', 'success').then(() => {
-            location.reload();
-        });
-    } else {
-        alert('กู้คืนข้อมูลเรียบร้อยแล้ว');
+    Swal.fire('สำเร็จ', 'กู้คืนข้อมูลเรียบร้อยแล้ว', 'success').then(() => {
         location.reload();
-    }
+    });
 }
