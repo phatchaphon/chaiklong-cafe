@@ -144,7 +144,7 @@ function handleLogin(event) {
         errorDiv.textContent = '';
         initializeAppUI();
     } else {
-        errorDiv.textContent = 'ชื่อผู้ใช้ หรือ รหัสผ่านไม่ถูกต้อง (User: admin, Pass: 1234)';
+        errorDiv.textContent = 'ชื่อผู้ใช้ หรือ รหัสผ่านไม่ถูกต้อง';
     }
 }
 
