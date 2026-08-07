@@ -1316,15 +1316,26 @@ function exportDataBackup() {
             history: JSON.parse(localStorage.getItem('coffee_history')) || []
         };
 
-        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backupData, null, 2));
-        const downloadAnchor = document.createElement('a');
+        const dataStr = JSON.stringify(backupData, null, 2);
         
+        // ใช้ Blob และ URL.createObjectURL เพื่อให้รองรับ iOS และมือถือทุกรุ่น
+        const blob = new Blob([dataStr], { type: 'application/json;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        
+        const downloadAnchor = document.createElement('a');
         const dateString = new Date().toISOString().slice(0, 10);
-        downloadAnchor.setAttribute("href", dataStr);
+        
+        downloadAnchor.href = url;
         downloadAnchor.setAttribute("download", `coffee_shop_backup_${dateString}.json`);
+        
         document.body.appendChild(downloadAnchor);
         downloadAnchor.click();
-        downloadAnchor.remove();
+        
+        // ทำความสะอาดหน่วยความจำหลังดาวน์โหลด
+        setTimeout(() => {
+            document.body.removeChild(downloadAnchor);
+            window.URL.revokeObjectURL(url);
+        }, 100);
 
         if (typeof addHistoryLog === 'function') {
             addHistoryLog('จัดการระบบ', 'สำรองข้อมูล', 'ดาวน์โหลดไฟล์สำรองข้อมูลระบบสำเร็จ');
@@ -1335,6 +1346,9 @@ function exportDataBackup() {
         }
     } catch (error) {
         console.error(error);
+        if (typeof Swal !== 'undefined') {
+            Swal.fire('เกิดข้อผิดพลาด', 'ไม่สามารถดาวน์โหลดไฟล์ได้', 'error');
+        }
     }
 }
 
