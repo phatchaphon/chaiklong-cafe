@@ -137,14 +137,14 @@ function handleLogin(event) {
     const passwordInput = document.getElementById('login-password').value.trim();
     const errorDiv = document.getElementById('login-error');
 
-    if (usernameInput === 'admins' && passwordInput === '357800') {
+    if (usernameInput === 'admin' && passwordInput === '1234') {
         localStorage.setItem('coffee_logged_in', 'true');
         localStorage.setItem('coffee_user', usernameInput);
         document.getElementById('login-screen').style.display = 'none';
         errorDiv.textContent = '';
         initializeAppUI();
     } else {
-        errorDiv.textContent = 'ชื่อผู้ใช้ หรือ รหัสผ่านไม่ถูกต้อง';
+        errorDiv.textContent = 'ชื่อผู้ใช้ หรือ รหัสผ่านไม่ถูกต้อง (User: admin, Pass: 1234)';
     }
 }
 
