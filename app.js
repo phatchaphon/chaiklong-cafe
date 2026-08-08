@@ -144,7 +144,7 @@ function handleLogin(event) {
         errorDiv.textContent = '';
         initializeAppUI();
     } else {
-        errorDiv.textContent = 'ชื่อผู้ใช้ หรือ รหัสผ่านไม่ถูกต้อง';
+        errorDiv.textContent = 'ชื่อผู้ใช้ หรือ รหัสผ่านไม่ถูกต้อง (User: admin, Pass: 1234)';
     }
 }
 
@@ -346,72 +346,84 @@ function updateMaterialUsageStats() {
     if (!usageTodayEl || !usage7DaysEl || !usage30DaysEl) return;
 
     const now = new Date();
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    const startOf7Days = new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000)).getTime();
-    const startOf30Days = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000)).getTime();
+    const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const time7DaysAgo = todayMidnight - (7 * 24 * 60 * 60 * 1000);
+    const time30DaysAgo = todayMidnight - (30 * 24 * 60 * 60 * 1000);
 
     let usageTodayMap = {};
     let usage7DaysMap = {};
     let usage30DaysMap = {};
 
-    historyLogs.filter(log => log.type === 'sales').forEach(log => {
-        let logTime = parseLocalDateString(log.timestamp);
+    const logs = (typeof historyLogs !== 'undefined' ? historyLogs : JSON.parse(localStorage.getItem('coffee_history') || '[]'));
+    const menuList = (typeof menus !== 'undefined' ? menus : JSON.parse(localStorage.getItem('coffee_menus') || '[]'));
+    const materialList = (typeof materials !== 'undefined' ? materials : JSON.parse(localStorage.getItem('coffee_materials') || '[]'));
+
+    logs.forEach(log => {
+        if (log.type !== 'sales' || !log.detail) return;
+
+        let logTime = parseThaiTimestamp(log.timestamp || log.date || log.time);
         if (!logTime) return;
+        if (logTime < time30DaysAgo) return;
 
-        if (log.detail) {
-            const matches = log.detail.matchAll(/\[(.*?)\]/g);
-            for (const match of matches) {
-                const items = match[1].split(',');
-                items.forEach(item => {
-                    const parts = item.trim().split(' x');
-                    if (parts.length === 2) {
-                        const rawName = parts[0].trim();
-                        const qtySold = parseInt(parts[1]) || 1;
+        // แยกรายการสินค้าจาก string ใน detail เช่น "โกโก้ เย็น 20 ออน(หวานปกติ) x1"
+        // ค้นหาข้อความที่อยู่ระหว่าง [ และ ]
+        const matchBracket = log.detail.match(/\[(.*?)\]/);
+        if (!matchBracket) return;
 
-                        let menuName = rawName;
-                        let sweetLevel = 'หวานปกติ';
-                        const matchSweet = rawName.match(/(.*?)\s*\((.*?)\)$/);
-                        if (matchSweet) {
-                            menuName = matchSweet[1].trim();
-                            sweetLevel = matchSweet[2].trim();
-                        }
+        const itemsString = matchBracket[1]; // เช่น "โกโก้ เย็น 20 ออน(หวานปกติ) x1, นมสด เย็น 20 ออน(หวานปกติ) x1"
+        const individualItems = itemsString.split(',');
 
-                        const menu = menus.find(m => m.name === menuName);
-                        if (menu) {
-                            let activeRecipe = [];
-                            if (menu.hasSweetnessLevels && menu.recipeByLevel && menu.recipeByLevel[sweetLevel]) {
-                                activeRecipe = menu.recipeByLevel[sweetLevel];
-                            } else if (menu.recipe) {
-                                activeRecipe = menu.recipe;
-                            }
+        individualItems.forEach(itemStr => {
+            itemStr = itemStr.trim();
+            // ดึงจำนวนจาก x ตามท้าย เช่น x1, x2
+            const qtyMatch = itemStr.match(/x(\d+)$/i);
+            const qtySold = qtyMatch ? parseInt(qtyMatch[1]) : 1;
 
-                            activeRecipe.forEach(rec => {
-                                const mat = materials.find(m => m.id === parseInt(rec.materialId));
-                                if (mat) {
-                                    const totalUsed = rec.stock * qtySold;
-                                    if (logTime >= startOf30Days) {
-                                        usage30DaysMap[mat.name] = (usage30DaysMap[mat.name] || 0) + totalUsed;
-                                    }
-                                    if (logTime >= startOf7Days) {
-                                        usage7DaysMap[mat.name] = (usage7DaysMap[mat.name] || 0) + totalUsed;
-                                    }
-                                    if (logTime >= startOfToday) {
-                                        usageTodayMap[mat.name] = (usageTodayMap[mat.name] || 0) + totalUsed;
-                                    }
-                                }
-                            });
-                        }
-                    }
-                });
+            // ตัดตัว x ออกเพื่อเอาชื่อเมนูไปเทียบกับรายชื่อเมนูที่มีอยู่
+            const rawMenuName = itemStr.replace(/x\d+$/i, '').trim(); // เช่น "โกโก้ เย็น 20 ออน(หวานปกติ)"
+
+            // ค้นหาเมนูที่ตรงกันหรือมีชื่อคล้ายกันในระบบเมนู
+            const matchedMenu = menuList.find(m => rawMenuName.includes(m.name) || m.name.includes(rawMenuName.split('(')[0].trim()));
+            if (!matchedMenu) return;
+
+            // หารายการสูตรวัตถุดิบ (รองรับสูตรตามระดับความหวาน หรือสูตรปกติ)
+            let activeRecipe = matchedMenu.recipe || [];
+            // ถ้ามีเลือกระดับความหวาน ลองแกะจากวงเล็บ เช่น (หวานปกติ)
+            const sweetMatch = rawMenuName.match(/\((.*?)\)/);
+            const sweetKey = sweetMatch ? sweetMatch[1] : '';
+
+            if (sweetKey && matchedMenu.recipeByLevel && matchedMenu.recipeByLevel[sweetKey]) {
+                activeRecipe = matchedMenu.recipeByLevel[sweetKey];
+            } else if (matchedMenu.hasSweetnessLevels && matchedMenu.recipeByLevel) {
+                const firstKey = Object.keys(matchedMenu.recipeByLevel)[0];
+                if (firstKey) activeRecipe = matchedMenu.recipeByLevel[firstKey];
             }
-        }
+
+            activeRecipe.forEach(rec => {
+                const mat = materialList.find(m => m.id == rec.materialId || m.name === rec.materialName);
+                if (mat) {
+                    const totalUsed = (parseFloat(rec.stock) || 0) * qtySold;
+                    const matName = mat.name;
+
+                    usage30DaysMap[matName] = (usage30DaysMap[matName] || 0) + totalUsed;
+
+                    if (logTime >= time7DaysAgo) {
+                        usage7DaysMap[matName] = (usage7DaysMap[matName] || 0) + totalUsed;
+                    }
+
+                    if (logTime >= todayMidnight) {
+                        usageTodayMap[matName] = (usageTodayMap[matName] || 0) + totalUsed;
+                    }
+                }
+            });
+        });
     });
 
     function renderUsageList(mapObj) {
         const entries = Object.entries(mapObj);
-        if (entries.length === 0) return '<li style="color: var(--text-muted); font-size: 13px; list-style:none;">ไม่มีข้อมูลการใช้</li>';
+        if (entries.length === 0) return '<li style="color: var(--text-muted); font-size: 13px; list-style:none; padding: 4px 0;">ไม่มีข้อมูลการใช้</li>';
         return entries.map(([matName, totalAmt]) => {
-            const mat = materials.find(m => m.name === matName);
+            const mat = materialList.find(m => m.name === matName);
             const unitStr = mat ? mat.unit : '';
             return `<li style="display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px dashed var(--border-color); font-size: 13px;">
                 <span>${matName}</span>
@@ -423,6 +435,35 @@ function updateMaterialUsageStats() {
     usageTodayEl.innerHTML = renderUsageList(usageTodayMap);
     usage7DaysEl.innerHTML = renderUsageList(usage7DaysMap);
     usage30DaysEl.innerHTML = renderUsageList(usage30DaysMap);
+}
+
+// ฟังก์ชันแปลงวันที่รูปแบบ '8/8/2569 15:50:20' เป็น Timestamp
+function parseThaiTimestamp(dateStr) {
+    try {
+        if (!dateStr) return null;
+        const parts = dateStr.split(' ');
+        const dateParts = parts[0].split('/');
+        
+        if (dateParts.length === 3) {
+            let day = parseInt(dateParts[0]);
+            let month = parseInt(dateParts[1]) - 1;
+            let year = parseInt(dateParts[2]);
+
+            if (year > 2400) {
+                year -= 543;
+            }
+
+            const timeParts = (parts[1] || '00:00:00').split(':');
+            let hour = parseInt(timeParts[0]) || 0;
+            let minute = parseInt(timeParts[1]) || 0;
+            let second = parseInt(timeParts[2]) || 0;
+
+            return new Date(year, month, day, hour, minute, second).getTime();
+        }
+    } catch (e) {
+        return null;
+    }
+    return null;
 }
 
 function parseLocalDateString(dateStr) {
@@ -1316,26 +1357,15 @@ function exportDataBackup() {
             history: JSON.parse(localStorage.getItem('coffee_history')) || []
         };
 
-        const dataStr = JSON.stringify(backupData, null, 2);
-        
-        // ใช้ Blob และ URL.createObjectURL เพื่อให้รองรับ iOS และมือถือทุกรุ่น
-        const blob = new Blob([dataStr], { type: 'application/json;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backupData, null, 2));
         const downloadAnchor = document.createElement('a');
+        
         const dateString = new Date().toISOString().slice(0, 10);
-        
-        downloadAnchor.href = url;
+        downloadAnchor.setAttribute("href", dataStr);
         downloadAnchor.setAttribute("download", `coffee_shop_backup_${dateString}.json`);
-        
         document.body.appendChild(downloadAnchor);
         downloadAnchor.click();
-        
-        // ทำความสะอาดหน่วยความจำหลังดาวน์โหลด
-        setTimeout(() => {
-            document.body.removeChild(downloadAnchor);
-            window.URL.revokeObjectURL(url);
-        }, 100);
+        downloadAnchor.remove();
 
         if (typeof addHistoryLog === 'function') {
             addHistoryLog('จัดการระบบ', 'สำรองข้อมูล', 'ดาวน์โหลดไฟล์สำรองข้อมูลระบบสำเร็จ');
@@ -1346,9 +1376,6 @@ function exportDataBackup() {
         }
     } catch (error) {
         console.error(error);
-        if (typeof Swal !== 'undefined') {
-            Swal.fire('เกิดข้อผิดพลาด', 'ไม่สามารถดาวน์โหลดไฟล์ได้', 'error');
-        }
     }
 }
 
