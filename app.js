@@ -365,30 +365,22 @@ function updateMaterialUsageStats() {
         if (!logTime) return;
         if (logTime < time30DaysAgo) return;
 
-        // แยกรายการสินค้าจาก string ใน detail เช่น "โกโก้ เย็น 20 ออน(หวานปกติ) x1"
-        // ค้นหาข้อความที่อยู่ระหว่าง [ และ ]
         const matchBracket = log.detail.match(/\[(.*?)\]/);
         if (!matchBracket) return;
 
-        const itemsString = matchBracket[1]; // เช่น "โกโก้ เย็น 20 ออน(หวานปกติ) x1, นมสด เย็น 20 ออน(หวานปกติ) x1"
+        const itemsString = matchBracket[1];
         const individualItems = itemsString.split(',');
 
         individualItems.forEach(itemStr => {
             itemStr = itemStr.trim();
-            // ดึงจำนวนจาก x ตามท้าย เช่น x1, x2
             const qtyMatch = itemStr.match(/x(\d+)$/i);
             const qtySold = qtyMatch ? parseInt(qtyMatch[1]) : 1;
+            const rawMenuName = itemStr.replace(/x\d+$/i, '').trim();
 
-            // ตัดตัว x ออกเพื่อเอาชื่อเมนูไปเทียบกับรายชื่อเมนูที่มีอยู่
-            const rawMenuName = itemStr.replace(/x\d+$/i, '').trim(); // เช่น "โกโก้ เย็น 20 ออน(หวานปกติ)"
-
-            // ค้นหาเมนูที่ตรงกันหรือมีชื่อคล้ายกันในระบบเมนู
             const matchedMenu = menuList.find(m => rawMenuName.includes(m.name) || m.name.includes(rawMenuName.split('(')[0].trim()));
             if (!matchedMenu) return;
 
-            // หารายการสูตรวัตถุดิบ (รองรับสูตรตามระดับความหวาน หรือสูตรปกติ)
             let activeRecipe = matchedMenu.recipe || [];
-            // ถ้ามีเลือกระดับความหวาน ลองแกะจากวงเล็บ เช่น (หวานปกติ)
             const sweetMatch = rawMenuName.match(/\((.*?)\)/);
             const sweetKey = sweetMatch ? sweetMatch[1] : '';
 
@@ -437,7 +429,6 @@ function updateMaterialUsageStats() {
     usage30DaysEl.innerHTML = renderUsageList(usage30DaysMap);
 }
 
-// ฟังก์ชันแปลงวันที่รูปแบบ '8/8/2569 15:50:20' เป็น Timestamp
 function parseThaiTimestamp(dateStr) {
     try {
         if (!dateStr) return null;
@@ -461,23 +452,6 @@ function parseThaiTimestamp(dateStr) {
             return new Date(year, month, day, hour, minute, second).getTime();
         }
     } catch (e) {
-        return null;
-    }
-    return null;
-}
-
-function parseLocalDateString(dateStr) {
-    try {
-        const parts = dateStr.split(', ');
-        const dateParts = parts[0].split('/');
-        if (dateParts.length === 3) {
-            const day = parseInt(dateParts[0]);
-            const month = parseInt(dateParts[1]) - 1;
-            const year = parseInt(dateParts[2]);
-            const timeParts = parts[1] ? parts[1].split(':') : [0,0,0];
-            return new Date(year, month, day, parseInt(timeParts[0]), parseInt(timeParts[1]), parseInt(timeParts[2])).getTime();
-        }
-    } catch(e) {
         return null;
     }
     return null;
@@ -885,6 +859,29 @@ function collectRecipeFromDOM() {
     return result;
 }
 
+// ฟังก์ชันคำนวณต้นทุนต่อแก้ว
+function calculateMenuCost(menu) {
+    let cost = 0;
+    if (menu.hasSweetnessLevels && menu.recipeByLevel) {
+        // ใช้สูตรระดับ 'หวานปกติ' เป็นตัวตั้งต้นคำนวณต้นทุนมาตรฐาน
+        const standardRecipe = menu.recipeByLevel['หวานปกติ'] || menu.recipeByLevel[Object.keys(menu.recipeByLevel)[0]] || [];
+        standardRecipe.forEach(r => {
+            const mat = materials.find(m => m.id == r.materialId);
+            if (mat) {
+                cost += (r.stock || 0) * (mat.costPerUnit || 0);
+            }
+        });
+    } else if (menu.recipe) {
+        menu.recipe.forEach(r => {
+            const mat = materials.find(m => m.id == r.materialId);
+            if (mat) {
+                cost += (r.stock || 0) * (mat.costPerUnit || 0);
+            }
+        });
+    }
+    return cost;
+}
+
 function renderMenuTable() {
     const tbody = document.getElementById('menu-table-body');
     if (!tbody) return;
@@ -903,7 +900,7 @@ function renderMenuTable() {
     const start = (paginationState.menu.page - 1) * limit;
     const paginated = filtered.slice(start, start + limit);
 
-    tbody.innerHTML = paginated.length === 0 ? `<tr><td colspan="5" style="text-align:center; color:var(--text-muted);">ไม่พบข้อมูลเมนู</td></tr>` : 
+    tbody.innerHTML = paginated.length === 0 ? `<tr><td colspan="6" style="text-align:center; color:var(--text-muted);">ไม่พบข้อมูลเมนู</td></tr>` : 
         paginated.map(m => {
             let recipeStr = '';
             if (m.hasSweetnessLevels) {
@@ -915,11 +912,14 @@ function renderMenuTable() {
                 }).filter(Boolean).join(', ');
             }
 
+            const menuCost = calculateMenuCost(m);
+
             return `
                 <tr>
                     <td><span class="cat-tag">${m.category || 'ทั่วไป'}</span></td>
                     <td><strong>${m.name}</strong> ${m.hasSweetnessLevels ? '<span style="font-size:10px; background:var(--primary); color:#fff; padding:2px 4px; border-radius:4px;">ปรับความหวานได้</span>' : ''}</td>
                     <td>${m.price} บาท</td>
+                    <td><strong>${menuCost.toFixed(2)} บาท</strong></td>
                     <td style="font-size: 12px; color: var(--text-muted);">${recipeStr || 'ไม่มีสูตร'}</td>
                     <td>
                         <button onclick="openMenuModal(${m.id})" class="btn-warning btn-small" style="margin-right:5px;">แก้ไข</button>
